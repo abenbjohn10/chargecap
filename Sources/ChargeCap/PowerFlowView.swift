@@ -1,3 +1,4 @@
+import AppKit
 import ChargeKit
 import SwiftUI
 
@@ -9,7 +10,6 @@ struct PowerFlowView: View {
     /// Wired devices the Mac is powering (USB-C ports, excluding a USB-C charger).
     var devices: [PortPower] = []
 
-    @State private var phases = FlowPhases()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Below this a path is drawn as idle. Accessories sip power, so their threshold is lower.
@@ -25,14 +25,13 @@ struct PowerFlowView: View {
             let layout = FlowLayout(size: geo.size, deviceCount: shownDevices.count)
             let edges = self.edges(layout)
             ZStack {
-                TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { timeline in
-                    Canvas { gc, _ in
-                        let dt = phases.advance(to: timeline.date)
-                        for (i, edge) in edges.enumerated() {
-                            draw(edge, index: i, dt: reduceMotion ? 0 : dt, in: &gc)
-                        }
-                    }
+                Canvas { gc, _ in
+                    for edge in edges { drawTrack(edge, in: &gc) }
                 }
+                // Particles run as Core Animation in the render server: near-zero app CPU, and they
+                // keep moving while a menu is open (menus pause the app's run loop timers).
+                FlowParticles(edges: edges.map { $0.particles }, paused: reduceMotion)
+                    .allowsHitTesting(false)
 
                 ForEach(Array(edges.prefix(3).enumerated()), id: \.offset) { i, edge in
                     // With devices attached the charger→Mac path is short; the Mac node shows its watts.
@@ -96,34 +95,13 @@ struct PowerFlowView: View {
         }
     }
 
-    private func draw(_ edge: FlowEdge, index: Int, dt: Double, in gc: inout GraphicsContext) {
+    private func drawTrack(_ edge: FlowEdge, in gc: inout GraphicsContext) {
         let active = edge.watts >= edge.threshold
         var track = Path()
         track.move(to: edge.from)
         track.addQuadCurve(to: edge.to, control: edge.control)
-
         gc.stroke(track, with: .color(active ? edge.color.opacity(0.22) : .secondary.opacity(0.12)),
                   style: StrokeStyle(lineWidth: active ? 4 : 2, lineCap: .round, dash: active ? [] : [3, 4]))
-        guard active else { return }
-
-        // log scale: a 2 W trickle and a 90 W fast charge both read clearly.
-        let level = log2(1 + edge.watts / 4)
-        let speed = 0.18 + 0.16 * level                 // path lengths per second
-        let count = 3 + min(6, Int(edge.watts / 6))
-        let radius = 2.2 + min(2.3, edge.watts / 25)
-        let phase = phases.step(index, by: dt * speed)
-
-        for i in 0..<count {
-            let t = (phase + Double(i) / Double(count)).truncatingRemainder(dividingBy: 1)
-            let p = edge.point(at: t)
-            // Fade in at the source, out at the destination.
-            let alpha = min(1, min(t, 1 - t) * 6)
-            let dot = Path(ellipseIn: CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
-            gc.drawLayer { layer in
-                layer.addFilter(.shadow(color: edge.color.opacity(0.8), radius: radius * 1.6))
-                layer.fill(dot, with: .color(edge.color.opacity(alpha)))
-            }
-        }
     }
 
     // MARK: Nodes
@@ -297,29 +275,14 @@ private struct FlowEdge {
     let color: Color
     var threshold = 0.3
 
+    var particles: ParticleEdge {
+        ParticleEdge(from: from, control: control, to: to, watts: watts, color: NSColor(color), threshold: threshold)
+    }
+
     /// Point on the quadratic Bézier at t ∈ [0, 1].
     func point(at t: Double) -> CGPoint {
         let u = 1 - t
         return CGPoint(x: u * u * from.x + 2 * u * t * control.x + t * t * to.x,
                        y: u * u * from.y + 2 * u * t * control.y + t * t * to.y)
-    }
-}
-
-/// Integrated particle phases. A reference type so per-frame updates don't trigger re-renders,
-/// and integrating (instead of `time * speed`) keeps dots from jumping when the wattage changes.
-private final class FlowPhases {
-    private var last: Date?
-    private var values: [Double] = []
-
-    func advance(to date: Date) -> Double {
-        defer { last = date }
-        guard let last else { return 0 }
-        return min(0.1, max(0, date.timeIntervalSince(last)))
-    }
-
-    func step(_ index: Int, by delta: Double) -> Double {
-        if index >= values.count { values += [Double](repeating: 0, count: index - values.count + 1) }
-        values[index] = (values[index] + delta).truncatingRemainder(dividingBy: 1)
-        return values[index]
     }
 }

@@ -10,6 +10,19 @@ Open the DMG, drag ChargeCap to Applications, launch it and click **Install help
 Requires macOS 14+ on Apple Silicon (native charge limit: macOS 26.4+). The build isn't notarized:
 if macOS blocks it, right-click the app → **Open**, or allow it in System Settings → Privacy & Security.
 
+## The app
+
+- **Window** (sidebar): Overview (battery gauge, stats, live power flow), Charging (limit slider, presets),
+  Devices (USB-C ports with W/V/A, Bluetooth batteries), Battery Health, Helper.
+- **Welcome** on first launch: animated liquid battery, feature tour, one-click helper setup
+  (replay: ChargeCap → Show Welcome).
+- **Menu bar panel**: live power-flow animation on top, Limit ▾ / Options ▾ dropdowns, ⋯ menu
+  (Open, Settings, Launch at Login, Show %, Quit), Bluetooth battery rings.
+- **Settings** (⌘,): General, Charging, Helper.
+
+Power-flow particles are Core Animation layers (`FlowParticles.swift`), so they keep moving while a
+menu is open and cost almost no CPU.
+
 ## How it works
 
 `ChargeCap.app` (UI) ↔ XPC ↔ `dev.abenbjohn.chargecap.helper` (root LaunchDaemon). The helper
@@ -35,9 +48,25 @@ SMC (no root needed):
 |---|---|
 | Charger → Mac / Charger → battery / battery → Mac | `PDTR` (DC in), `PSTR` (system), `B0AV` × `B0AC` (battery, + charging / − discharging) |
 | Mac → wired devices | Per USB-C port `D{n}JV` × `D{n}JI`; devices from `IOUSBHostDevice`, mapped to a port via their `usb-drd{n-1}` controller |
-| Wireless accessories | `system_profiler SPBluetoothDataType` battery levels (no power flow — they don't draw from the Mac) |
+| Wireless accessories | Battery levels only (they don't draw from the Mac) — see below |
 
 Particle speed, count and size scale with watts. Reduce Motion stops the particles.
+
+## How readings work
+
+| Reading | Source | Root? |
+|---|---|---|
+| Battery % / charging state | IOPowerSources (`IOPSCopyPowerSourcesInfo`) — same as the system menu bar | no |
+| Health, capacity, cycles | IORegistry `AppleSmartBattery`: `CycleCount`, `BatteryData.NominalChargeCapacity / DesignCapacity` | no |
+| Battery temperature | SMC `TB0T` (float, °C) | no |
+| Charger in / Mac draw / battery flow | SMC `PDTR`, `PSTR`, `B0AV` × `B0AC` (mV × signed mA) | no |
+| USB-C device power | SMC `D{n}JV` × `D{n}JI` per port; device names from `IOUSBHostDevice`, mapped to port n via the `usb-drd{n-1}` controller | no |
+| Charge limit state | root prefs `com.apple.smartcharging.topoffprotection` (`MCLFeatureState`, `mclLimitValue`); firmware echo in SMC `CHLT` | read via helper |
+| Adapter on/off | SMC `CHIE` (0x00 on, 0x08 off) | write needs helper |
+| Bluetooth batteries | 1. `system_profiler SPBluetoothDataType` (AirPods L/R/Case, Beats) 2. IORegistry `AppleDeviceManagementHIDEventService.BatteryPercent` (Magic accessories) 3. CoreBluetooth GATT Battery Service `0x180F`/`0x2A19` (BLE mice/keyboards) | no (Bluetooth permission for 3) |
+
+SMC values are read through `IOConnectCallStructMethod` on the `AppleSMC` user client (selector 2,
+80-byte `SMCParamStruct`). Apple Watch and iPhone don't expose their battery to macOS apps.
 
 ## Build & install
 

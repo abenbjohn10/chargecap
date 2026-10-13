@@ -9,7 +9,7 @@ struct AccessoriesView: View {
     var body: some View {
         if !devices.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Wireless accessories").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text("Bluetooth devices").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                     ForEach(devices) { AccessoryChip(device: $0) }
                 }

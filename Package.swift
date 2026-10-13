@@ -12,7 +12,7 @@ let package = Package(
         .executableTarget(
             name: "ChargeCap",
             dependencies: ["ChargeKit"],
-            linkerSettings: [.linkedFramework("ServiceManagement")]
+            linkerSettings: [.linkedFramework("ServiceManagement"), .linkedFramework("CoreBluetooth")]
         ),
         .executableTarget(
             name: "chargecap-helper",

@@ -1,6 +1,8 @@
 import AppKit
 import ChargeKit
 import Combine
+import ServiceManagement
+import SwiftUI
 
 @MainActor
 final class ChargeModel: ObservableObject {
@@ -20,7 +22,7 @@ final class ChargeModel: ObservableObject {
     let client = HelperClient()
     private let sampler = PowerSampler()
     private let scanner = DeviceScanner()
-    private var wirelessTimer: Timer?
+    private let bluetooth = BluetoothBatteryMonitor()
     private var timer: Timer?
     private var powerTimer: Timer?
 
@@ -28,29 +30,31 @@ final class ChargeModel: ObservableObject {
 
     init() {
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
-        }
+        // Timers run in .common modes so values keep updating while a menu is open.
+        timer = Self.commonTimer(5) { [weak self] in self?.refresh() }
         power = sampler.sample()
-        powerTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.samplePower() }
-        }
-        scanWireless()
-        wirelessTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scanWireless() }
-        }
+        powerTimer = Self.commonTimer(1) { [weak self] in self?.samplePower() }
+        // Bluetooth batteries: system_profiler + IORegistry + GATT Battery Service (see BluetoothBatteryMonitor).
+        bluetooth.$devices
+            .map { $0.map(Self.wirelessDevice) }
+            .removeDuplicates()
+            .assign(to: &$wireless)
     }
 
-    /// system_profiler is slow-ish, so Bluetooth is scanned off the main thread every 30 s.
-    private func scanWireless() {
-        DispatchQueue.global(qos: .utility).async {
-            let found = DeviceScanner.wireless()
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { [weak self] in
-                    if self?.wireless != found { self?.wireless = found }
-                }
-            }
+    private static func commonTimer(_ interval: TimeInterval, _ action: @escaping @MainActor () -> Void) -> Timer {
+        let t = Timer(timeInterval: interval, repeats: true) { _ in MainActor.assumeIsolated { action() } }
+        RunLoop.main.add(t, forMode: .common)
+        return t
+    }
+
+    private static func wirelessDevice(_ d: BTDevice) -> WirelessDevice {
+        let kind: DeviceKind = switch d.kind {
+        case .speaker: .audio
+        case .trackpad: .mouse
+        default: DeviceKind(rawValue: d.kind.rawValue) ?? .other
         }
+        return WirelessDevice(name: d.name, kind: kind,
+                       battery: d.level, left: d.left, right: d.right, caseLevel: d.caseLevel)
     }
 
     private func samplePower() {
@@ -96,6 +100,60 @@ final class ChargeModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: Shared UI helpers (window, menu bar menu and Settings all use these)
+
+    @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
+
+    func setLaunchAtLogin(_ on: Bool) {
+        do {
+            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+        } catch {
+            helperError = "Launch at login: \(error.localizedDescription)"
+        }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    var isReady: Bool { helperInstalled && status != nil }
+
+    func setLimit(_ limit: Int) {
+        config.limit = limit
+        push()
+    }
+
+    /// Binding into the helper config that pushes on every change.
+    func binding<T>(_ keyPath: WritableKeyPath<HelperConfig, T>) -> Binding<T> {
+        Binding(
+            get: { self.config[keyPath: keyPath] },
+            set: { self.config[keyPath: keyPath] = $0; self.push() }
+        )
+    }
+
+    var stateText: String {
+        if let action = status?.lastAction { return action }
+        if battery.isCharging { return "Charging" }
+        return battery.externalConnected ? "Plugged in, not charging" : "On battery"
+    }
+
+    var timeText: String? {
+        guard let t = battery.timeRemaining else { return nil }
+        return "\(t / 60):\(String(format: "%02d", t % 60)) \(battery.isCharging ? "until full" : "remaining")"
+    }
+
+    var menuIcon: String {
+        if status?.adapterEnabled == false { return "battery.75percent" }
+        if battery.isCharging { return "battery.100percent.bolt" }
+        if status != nil && battery.percent >= config.effectiveLimit { return "battery.100percent.circle" }
+        return "battery.75percent"
+    }
+
+    var limitExplanation: String {
+        let limit = config.effectiveLimit
+        if limit >= 100 { return "Charges to 100%." }
+        if limit >= 80 { return "Uses macOS's built-in charge limit, so it also holds while the Mac sleeps or ChargeCap is closed." }
+        if let key = status?.inhibitKey { return "Below 80% uses the SMC charge-inhibit key (\(key))." }
+        return "This Mac has no charge-inhibit key, so below 80% ChargeCap switches the adapter off at \(limit)% and back on at \(limit - config.sailingBand)%. During sleep it charges to 80%."
     }
 
     func install() { runScript("install-helper.sh") }

@@ -45,7 +45,35 @@ extension JSONEncoder {
 }
 
 let args = CommandLine.arguments
-if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
+if let i = args.firstIndex(of: "--render-icon"), i + 1 < args.count {
+    // Build step: render AppIconView into an .iconset for iconutil.
+    let dir = URL(fileURLWithPath: args[i + 1])
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    MainActor.assumeIsolated {
+        for (points, scale) in [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2)] {
+            let px = CGFloat(points * scale)
+            let renderer = ImageRenderer(content: AppIconView().scaleEffect(px / 1024).frame(width: px, height: px))
+            renderer.scale = 1
+            guard let cg = renderer.cgImage,
+                  let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { continue }
+            let name = "icon_\(points)x\(points)\(scale == 2 ? "@2x" : "").png"
+            try? png.write(to: dir.appendingPathComponent(name))
+        }
+    }
+} else if let i = args.firstIndex(of: "--snapshot-panel"), i + 1 < args.count {
+    // Dev aid: render the menu bar panel with live data.
+    MainActor.assumeIsolated {
+        let model = ChargeModel()
+        RunLoop.main.run(until: Date().addingTimeInterval(9))   // helper status + Bluetooth GATT reads
+        let renderer = ImageRenderer(content: MenuBarMenu(model: model).background(Color(white: 0.16))
+            .environment(\.colorScheme, .dark))
+        renderer.scale = 2
+        if let cg = renderer.cgImage, let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: args[i + 1]))
+            print("wrote panel")
+        }
+    }
+} else if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     // Dev aid: render the power-flow view for each state to PNGs.
     let dir = URL(fileURLWithPath: args[i + 1])
     let states: [(String, PowerSample, Int)] = [
@@ -91,8 +119,14 @@ if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
         for d in port.devices { print("    • \(d.name) [\(d.kind.rawValue)]") }
     }
     print("Bluetooth (connected):")
-    for d in DeviceScanner.wireless() {
-        print("    • \(d.name) [\(d.kind.rawValue)] battery=\(d.battery.map(String.init) ?? "-") L=\(d.left.map(String.init) ?? "-") R=\(d.right.map(String.init) ?? "-") case=\(d.caseLevel.map(String.init) ?? "-")")
+    MainActor.assumeIsolated {
+        let monitor = BluetoothBatteryMonitor()
+        RunLoop.main.run(until: Date().addingTimeInterval(8))   // let GATT reads arrive
+        for d in monitor.devices {
+            print("    • \(d.name) [\(d.kind.rawValue)] battery=\(d.displayLevel.map { "\($0)%" } ?? "-")"
+                  + " L=\(d.left.map(String.init) ?? "-") R=\(d.right.map(String.init) ?? "-") case=\(d.caseLevel.map(String.init) ?? "-")"
+                  + "  via \(d.source ?? "-")")
+        }
     }
 } else if args.contains("--power") {
     let sampler = PowerSampler()
