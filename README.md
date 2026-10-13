@@ -36,7 +36,13 @@ Particle speed, count and size scale with watts. Reduce Motion stops the particl
 ```sh
 ./scripts/bundle.sh                 # build/ChargeCap.app, signed with the Apple Development identity
 open build/ChargeCap.app            # "Install helper" asks for your password once
+./scripts/make-dmg.sh               # build/ChargeCap-<version>.dmg (drag to Applications)
 ```
+
+The DMG is signed with an Apple Development certificate, so Gatekeeper only accepts it on Macs
+that trust that certificate. For wider distribution, set `IDENTITY` to a Developer ID Application
+certificate and `NOTARY_PROFILE` to a `notarytool` keychain profile; the script then notarizes and
+staples the DMG.
 
 CLI (run the binary inside the signed app):
 
