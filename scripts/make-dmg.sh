@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 
 ./scripts/bundle.sh
 VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" build/ChargeCap.app/Contents/Info.plist)
-DMG="build/ChargeCap-$VERSION.dmg"
+DMG="build/ChargeCap-$VERSION.dmg"  # also upload as ChargeCap.dmg so releases/latest/download/ChargeCap.dmg stays valid
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 

@@ -2,6 +2,14 @@
 
 Menu bar battery charge limiter for macOS, modeled on how AlDente works.
 
+[![Download ChargeCap](https://img.shields.io/badge/Download-ChargeCap.dmg-2ea44f?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/abenbjohn10/chargecap/releases/latest/download/ChargeCap.dmg)
+
+**[⬇ Download the latest DMG](https://github.com/abenbjohn10/chargecap/releases/latest/download/ChargeCap.dmg)** · [All releases](https://github.com/abenbjohn10/chargecap/releases)
+
+Open the DMG, drag ChargeCap to Applications, launch it and click **Install helper**.
+Requires macOS 14+ on Apple Silicon (native charge limit: macOS 26.4+). The build isn't notarized:
+if macOS blocks it, right-click the app → **Open**, or allow it in System Settings → Privacy & Security.
+
 ## How it works
 
 `ChargeCap.app` (UI) ↔ XPC ↔ `dev.abenbjohn.chargecap.helper` (root LaunchDaemon). The helper
